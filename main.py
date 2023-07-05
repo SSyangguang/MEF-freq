@@ -29,4 +29,4 @@ def test():
 
 if __name__ == '__main__':
     set_seed()
-    train()
+    test()

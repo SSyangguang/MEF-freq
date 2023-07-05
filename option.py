@@ -22,8 +22,8 @@ parser.add_argument('--data_test_path', type=str, default='/data/yg/data/PQA-MEF
                     help='MEF dataset path')
 
 # Training
-parser.add_argument('--batch_size', type=int, default=300, help='batch size of fusion training')
-parser.add_argument('--patch', type=int, default=200, help='patch size of fusion training')
+parser.add_argument('--batch_size', type=int, default=100, help='batch size of fusion training')
+parser.add_argument('--patch', type=int, default=128, help='patch size of fusion training')
 parser.add_argument('--epochs', type=int, default=2000, help='epochs of fusion training')
 parser.add_argument('--lr', type=float, default=1e-3, help='learning rate of fusion training')
 parser.add_argument('--wd', type=float, default=9e-3, help='weight decay of fusion training')

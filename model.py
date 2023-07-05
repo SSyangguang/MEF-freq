@@ -128,7 +128,7 @@ class Train(object):
 
                 # calculate total loss
                 loss_total = loss_sim + loss_mse + 0.2 * loss_fre + amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
-                # loss_total = loss_sim + 20 * loss_mse + 0.1 * amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
+                # loss_total = loss_sim + loss_mse + 0.1 * amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
                 loss_total_epoch.append(loss_total.item())
 
                 loss_total.backward()
