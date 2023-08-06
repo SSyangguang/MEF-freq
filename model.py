@@ -17,7 +17,7 @@ from kornia.losses import MS_SSIMLoss, SSIMLoss
 
 from option import args
 from dataloader import TrainMEF, TestMEF
-from net import Fusion, DenseNet
+from net import Fusion, DenseNet, vgg16
 from loss import ssim, ms_ssim, SSIM, MS_SSIM, AMPLoss, PhaLoss
 
 from GPPNN_models.GPPNN_freq import GPPNN
@@ -55,6 +55,7 @@ class Train(object):
         self.fusion_model = torch.nn.DataParallel(Fusion(self.n_feat), device_ids=args.devices).cuda()
         self.optimizer = AdamW(self.fusion_model.parameters(), lr=self.lr, weight_decay=args.wd)
         self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.5)
+        self.vgg = vgg16().cuda()
         self.mse = nn.MSELoss(reduction='mean').cuda()
         self.ms_ssim = SSIMLoss(window_size=11).cuda()  # 0.8
         self.fre_ms_ssim = SSIMLoss(window_size=11).cuda()
@@ -90,18 +91,22 @@ class Train(object):
                 under = under.cuda()
 
                 # fuse image
-                fusion, fre_output = net(over, under)
+                fusion, fre1, fre2, fre3, fre4 = net(over, under)
                 fusion = fusion.cuda()
-                fre_output = fre_output.cuda()
+                fre1 = fre1.cuda()
+                fre2 = fre2.cuda()
+                fre3 = fre3.cuda()
+                fre4 = fre4.cuda()
+                # fre_output = fre_output.cuda()
                 # print(fusion)
 
                 self.optimizer.zero_grad(set_to_none=True)
 
-                # freq branch loss
-                fre_loss1 = self.fre_ms_ssim(fre_output, over)
-                fre_loss2 = self.fre_ms_ssim(fre_output, under)
-                loss_fre = 0.5 * fre_loss1 + 0.5 * fre_loss2
-                loss_fre = torch.mean(loss_fre)
+                # # freq branch loss
+                # fre_loss1 = self.fre_ms_ssim(fre_output, over)
+                # fre_loss2 = self.fre_ms_ssim(fre_output, under)
+                # loss_fre = 0.5 * fre_loss1 + 0.5 * fre_loss2
+                # loss_fre = torch.mean(loss_fre)
 
                 # calculate sim loss
                 ssim_img1 = self.ms_ssim(fusion, over)
@@ -126,9 +131,28 @@ class Train(object):
                 pha_loss = 0.5 * pha_loss1 + 0.5 * pha_loss2
                 pha_loss = torch.mean(pha_loss)
 
+                # calculate per loss
+                # per_over = self.vgg(torch.cat((over, over, over), dim=1))
+                # per_under = self.vgg(torch.cat((under, under, under), dim=1))
+                # per_fusion = self.vgg(torch.cat((fusion, fusion, fusion), dim=1))
+                # per_loss1 = self.mse(per_fusion[4], per_over[4])
+                # per_loss2 = self.mse(per_fusion[4], per_under[4])
+                # loss_per = 0.5 * per_loss1 + 0.5 * per_loss2
+                # loss_per = torch.mean(loss_per)
+
+                # calculate fre branch loss
+                fre_loss1 = self.ms_ssim(fre1, over) + self.ms_ssim(fre1, under) + 0.8 * (self.mse(fre1, over) + self.mse(fre1, under))
+                fre_loss2 = self.ms_ssim(fre2, over) + self.ms_ssim(fre2, under) + 0.8 * (
+                            self.mse(fre2, over) + self.mse(fre2, under))
+                fre_loss3 = self.ms_ssim(fre3, over) + self.ms_ssim(fre3, under) + 0.8 * (
+                            self.mse(fre3, over) + self.mse(fre3, under))
+                fre_loss4 = self.ms_ssim(fre4, over) + self.ms_ssim(fre4, under) + 0.8 * (
+                            self.mse(fre4, over) + self.mse(fre4, under))
+                fre_bra_loss = fre_loss1 + fre_loss2 + fre_loss3 + fre_loss4
+
                 # calculate total loss
-                loss_total = loss_sim + loss_mse + 0.2 * loss_fre + amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
-                # loss_total = loss_sim + loss_mse + 0.1 * amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
+                # loss_total = loss_sim + loss_mse + 0.2 * loss_fre + amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
+                loss_total = loss_sim + loss_mse + 0.1 * amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
                 loss_total_epoch.append(loss_total.item())
 
                 loss_total.backward()
@@ -238,7 +262,7 @@ class TestColor(object):
             under = under.cuda()
 
             # outputs = self.block_fusion(over.squeeze(), under.squeeze(), block_size=args.block_size)
-            outputs, _ = fusion_model(over, under)
+            outputs, _, _, _, _ = fusion_model(over, under)
 
             outputs = outputs.cpu().detach().numpy()
             outputs = np.squeeze(outputs)

@@ -370,3 +370,20 @@ class FourierLoss(nn.Module):
         y_fourier = torch.cat([y_amp, y_pha], 1)
 
         return self.cri(x_fourier, y_fourier)
+
+
+class Perloss(nn.Module):
+    '''Multi-scale Perceptual Loss'''
+
+    def __init__(self, gamma):
+        super(Perloss, self).__init__()
+        self.gamma = gamma
+        self.device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+        self.mse = nn.MSELoss(reduction='mean').to(self.device)
+
+    def forward(self, fusion_fea, ir_fea, vis_fea):
+
+        loss_1x_1x = torch.mean((features_grad(fusion_fea[0]) - features_grad(vis_fea[0])).pow(2), dim=[1, 2, 3]) \
+                     + self.gamma * torch.mean((fusion_fea[0] - ir_fea[0]).pow(2), dim=[1, 2, 3])
+
+        return loss

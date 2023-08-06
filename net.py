@@ -312,229 +312,328 @@ def mean_channels(F):
     return spatial_sum / (F.size(2) * F.size(3))
 
 
-class Fusion(nn.Module):
-    def __init__(self, channels, depth=3):
-        super(Fusion, self).__init__()
-        self.depth = depth
-        self.channels = channels
-        self.dense = DenseNet(self.channels)
-        self.over_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.LeakyReLU(0.1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.LeakyReLU(0.1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.LeakyReLU(0.1),
-                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                        nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
-                                        nn.LeakyReLU(0.1)
-                                        )
-        self.under_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.LeakyReLU(0.1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.LeakyReLU(0.1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.LeakyReLU(0.1),
-                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-                                         nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
-                                         nn.LeakyReLU(0.1)
-                                         )
-
-        self.fref0 = FreLayer(self.channels, self.channels)
-        self.fref1 = FreLayer(self.channels, self.channels)
-        self.fref2 = FreLayer(self.channels, self.channels)
-        self.fref3 = FreLayer(self.channels, self.channels)
-
-        self.spa_post = nn.Sequential(
-            nn.Sequential(
-                nn.Conv2d(self.channels * (self.depth + 1) * 2, self.channels * 4, (3, 3), (1, 1), 1),
-                nn.LeakyReLU(0.1)
-            ),
-            nn.Sequential(
-                nn.Conv2d(self.channels * 4, self.channels * 2, (3, 3), (1, 1), 1),
-                nn.BatchNorm2d(self.channels * 2),
-                nn.LeakyReLU(0.1)
-            ),
-            nn.Sequential(
-                nn.Conv2d(self.channels * 2, self.channels, (3, 3), (1, 1), 1),
-                nn.BatchNorm2d(self.channels),
-                nn.LeakyReLU(0.1)
-            ))
-        self.spa_output = nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1)
-        self.fre_output = nn.Sequential(nn.Conv2d(self.channels*4, self.channels*2, (1, 1), (1, 1), 0),
-                                        nn.Conv2d(self.channels*2, self.channels, (1, 1), (1, 1), 0))
-
-        self.spa_att = nn.Sequential(nn.Conv2d(self.channels, self.channels // 2, (3, 3), (1, 1), 1, bias=True),
-                                     nn.LeakyReLU(0.1),
-                                     nn.Conv2d(self.channels // 2, self.channels, (3, 3), (1, 1), 1, bias=True),
-                                     nn.Sigmoid())
-
-        self.output = nn.Sequential(
-            nn.Conv2d(self.channels, 4, (3, 3), (1, 1), 1),
-            nn.Conv2d(4, 1, (3, 3), (1, 1), 1),
-            nn.Tanh()
-        )
-
-        self.refine = Refine(self.channels, 1)
-
-        self.spa_att = nn.Sequential(nn.Conv2d(channels, channels // 2, (3, 3), (1, 1), 1, bias=True),
-                                     nn.LeakyReLU(0.1),
-                                     nn.Conv2d(channels // 2, channels, (3, 3), (1, 1), 1, bias=True),
-                                     nn.Sigmoid())
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.contrast = stdv_channels
-        self.cha_att = nn.Sequential(nn.Conv2d(channels * 2, channels // 2, (1, 1), (1, 1), 0, bias=True),
-                                     nn.LeakyReLU(0.1),
-                                     nn.Conv2d(channels // 2, channels * 2, (1, 1), (1, 1), 0, bias=True),
-                                     nn.Sigmoid())
-        self.post = nn.Conv2d(channels * 2, channels, (3, 3), (1, 1), 1, bias=True)
-        self.fre_loss = nn.Conv2d(self.channels, 1, (1, 1), (1, 1), 0, bias=True)
-
-
-    def forward(self, over, under):
-        _, _, H, W = over.shape
-
-        spa_output = self.dense(over, under)
-
-        over = self.over_input(over)
-        under = self.under_input(under)
-
-        fre_f0 = self.fref0(over, under)
-        fre_f1 = self.fref1(over, under)
-        fre_f2 = self.fref2(over, under)
-        fre_f3 = self.fref3(over, under)
-        fre_output = self.fre_output(torch.cat([fre_f0, fre_f1, fre_f2, fre_f3], dim=1))
-
-        spa_map = self.spa_att(spa_output - fre_output)
-        spa_res = fre_output * spa_map + spa_output
-        cat_f = torch.cat([spa_res, fre_output], 1)
-        fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
-        fusion = self.output(fusion)
-
-        fre_loss = self.fre_loss(fre_output)
-
-        # fusion_spa = self.spa_post(fusion_spa)
-        # spa_output = self.spa_output(fusion_spa)
-        # spa_fre = torch.fft.rfft2(spa_output + 1e-8, norm='backward')
-        # spa_amp = torch.abs(spa_fre)
-        # spa_pha = torch.angle(spa_fre)
-        #
-        # fre_fre = torch.fft.rfft2(fre_output + 1e-8, norm='backward')
-        # fre_amp = torch.abs(fre_fre)
-        # fre_pha = torch.angle(fre_fre)
-        #
-        # fusion_fre_amp = fre_amp + spa_amp
-        # pha_map = self.spa_att(spa_pha - fre_pha)
-        # fusion_fre_pha = spa_pha * pha_map + spa_pha
-        #
-        # real = fusion_fre_amp * torch.cos(fusion_fre_pha) + 1e-8
-        # imag = fusion_fre_amp * torch.sin(fusion_fre_pha) + 1e-8
-        # fusion_fre = torch.complex(real, imag) + 1e-8
-        # fusion = self.output(torch.abs(torch.fft.irfft2(fusion_fre, s=(H, W), norm='backward')))
-        #
-        # fusion = self.output(spa_output + fre_output)
-        #
-        # fusion = self.output(torch.cat([spa_output, fre_output], 1))
-        #
-        # fre_output = self.refine(fre_output)
-
-        return fusion, fre_loss
-
-
-# class FusionBlock(nn.Module):
-#     def __init__(self, in_channels, out_channels, depth=3):
-#         super(FusionBlock, self).__init__()
-#         self.depth = depth
-#         self.in_channels = in_channels
-#         self.out_channels = out_channels
-#
-#         self.SpaBranch = DenseLayer(self.in_channels, self.out_channels)
-#         self.FreBranch = FreLayer(self.in_channels, self.out_channels)
-#         self.spa_post = nn.Conv2d((self.in_channels + self.out_channels) * 2, self.out_channels, (3, 3), (1, 1), 1, bias=True)
-#
-#         self.spa_att = nn.Sequential(nn.Conv2d(self.out_channels, self.out_channels // 2, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.LeakyReLU(0.1),
-#                                      nn.Conv2d(self.out_channels // 2, self.out_channels, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.Sigmoid())
-#         self.avgpool = nn.AdaptiveAvgPool2d(1)
-#         self.contrast = stdv_channels
-#         self.cha_att = nn.Sequential(nn.Conv2d(self.out_channels * 2, self.out_channels // 2, (1, 1), (1, 1), 0, bias=True),
-#                                      nn.LeakyReLU(0.1),
-#                                      nn.Conv2d(self.out_channels // 2, self.out_channels * 2, (1, 1), (1, 1), 0, bias=True),
-#                                      nn.Sigmoid())
-#         self.post = nn.Conv2d(self.out_channels * 2, self.out_channels, (3, 3), (1, 1), 1, bias=True)
-#
-#     def forward(self, over, under):
-#         _, _, H, W = over.shape
-#
-#         spa_over = self.SpaBranch(over)
-#         spa_under = self.SpaBranch(under)
-#         spa_output = self.spa_post(torch.cat([spa_over, spa_under], dim=1))
-#         fre_output = self.FreBranch(over, under)
-#
-#         spa_map = self.spa_att(spa_output - fre_output)
-#         spa_res = fre_output * spa_map + spa_output
-#         cat_f = torch.cat([spa_res, fre_output], 1)
-#         fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
-#
-#         return fusion, spa_over, spa_under
-#
-#
 # class Fusion(nn.Module):
-#     def __init__(self, channels, growth=8):
+#     def __init__(self, channels, depth=3):
 #         super(Fusion, self).__init__()
-#         self.growth = growth
+#         self.depth = depth
 #         self.channels = channels
-#
+#         self.dense = DenseNet(self.channels)
 #         self.over_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
 #                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
 #                                         nn.LeakyReLU(0.1),
 #                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0)
+#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                         nn.LeakyReLU(0.1),
+#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                         nn.LeakyReLU(0.1),
+#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                         nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
+#                                         nn.LeakyReLU(0.1)
 #                                         )
 #         self.under_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
 #                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
 #                                          nn.LeakyReLU(0.1),
 #                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0)
+#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                          nn.LeakyReLU(0.1),
+#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                          nn.LeakyReLU(0.1),
+#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+#                                          nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
+#                                          nn.LeakyReLU(0.1)
 #                                          )
-#         # modules = []
-#         # for i in range(5):
-#         #     modules.append(FusionBlock(self.channels, self.growth))
-#         #     self.channels += self.growth
-#         # self.fusion_layer = nn.Sequential(*modules)
 #
-#         self.fusion_layer1 = FusionBlock(self.channels, self.growth)
-#         self.fusion_layer2 = FusionBlock(self.channels + self.growth, self.growth)
-#         self.fusion_layer3 = FusionBlock(self.channels + self.growth * 2, self.growth)
-#         self.fusion_layer4 = FusionBlock(self.channels + self.growth * 3, self.growth)
-#         self.fusion_layer5 = FusionBlock(self.channels + self.growth * 4, self.growth)
+#         self.fref0 = FreLayer(self.channels, self.channels)
+#         self.fref1 = FreLayer(self.channels, self.channels)
+#         self.fref2 = FreLayer(self.channels, self.channels)
+#         self.fref3 = FreLayer(self.channels, self.channels)
+#
+#         self.spa_post = nn.Sequential(
+#             nn.Sequential(
+#                 nn.Conv2d(self.channels * (self.depth + 1) * 2, self.channels * 4, (3, 3), (1, 1), 1),
+#                 nn.LeakyReLU(0.1)
+#             ),
+#             nn.Sequential(
+#                 nn.Conv2d(self.channels * 4, self.channels * 2, (3, 3), (1, 1), 1),
+#                 nn.BatchNorm2d(self.channels * 2),
+#                 nn.LeakyReLU(0.1)
+#             ),
+#             nn.Sequential(
+#                 nn.Conv2d(self.channels * 2, self.channels, (3, 3), (1, 1), 1),
+#                 nn.BatchNorm2d(self.channels),
+#                 nn.LeakyReLU(0.1)
+#             ))
+#         self.spa_output = nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1)
+#         self.fre_output = nn.Sequential(nn.Conv2d(self.channels*4, self.channels*2, (1, 1), (1, 1), 0),
+#                                         nn.Conv2d(self.channels*2, self.channels, (1, 1), (1, 1), 0))
+#
+#         self.spa_att = nn.Sequential(nn.Conv2d(self.channels, self.channels // 2, (3, 3), (1, 1), 1, bias=True),
+#                                      nn.LeakyReLU(0.1),
+#                                      nn.Conv2d(self.channels // 2, self.channels, (3, 3), (1, 1), 1, bias=True),
+#                                      nn.Sigmoid())
 #
 #         self.output = nn.Sequential(
-#             ConvBlock(self.growth * 5, 128, kernel_size=3, act_type='lrelu', norm_type=None),
-#             ConvBlock(128, 64, kernel_size=3, act_type='lrelu', norm_type=None),
-#             ConvBlock(64, 32, kernel_size=3, act_type='lrelu', norm_type=None),
-#             ConvBlock(32, 8, kernel_size=3, act_type='lrelu', norm_type=None),
-#             nn.Conv2d(8, 1, (3, 3), (1, 1), 1),
+#             nn.Conv2d(self.channels, 4, (3, 3), (1, 1), 1),
+#             nn.Conv2d(4, 1, (3, 3), (1, 1), 1),
 #             nn.Tanh()
 #         )
 #
+#         self.refine = Refine(self.channels, 1)
+#
+#         self.spa_att = nn.Sequential(nn.Conv2d(channels, channels // 2, (3, 3), (1, 1), 1, bias=True),
+#                                      nn.LeakyReLU(0.1),
+#                                      nn.Conv2d(channels // 2, channels, (3, 3), (1, 1), 1, bias=True),
+#                                      nn.Sigmoid())
+#         self.avgpool = nn.AdaptiveAvgPool2d(1)
+#         self.contrast = stdv_channels
+#         self.cha_att = nn.Sequential(nn.Conv2d(channels * 2, channels // 2, (1, 1), (1, 1), 0, bias=True),
+#                                      nn.LeakyReLU(0.1),
+#                                      nn.Conv2d(channels // 2, channels * 2, (1, 1), (1, 1), 0, bias=True),
+#                                      nn.Sigmoid())
+#         self.post = nn.Conv2d(channels * 2, channels, (3, 3), (1, 1), 1, bias=True)
+#         self.fre_loss = nn.Conv2d(self.channels, 1, (1, 1), (1, 1), 0, bias=True)
+#
+#
 #     def forward(self, over, under):
+#         _, _, H, W = over.shape
+#
+#         spa_output = self.dense(over, under)
+#
 #         over = self.over_input(over)
 #         under = self.under_input(under)
 #
-#         fusion1, spa_over1, spa_under1 = self.fusion_layer1(over, under)
-#         fusion2, spa_over2, spa_under2 = self.fusion_layer2(spa_over1, spa_under1)
-#         fusion3, spa_over3, spa_under3 = self.fusion_layer3(spa_over2, spa_under2)
-#         fusion4, spa_over4, spa_under4 = self.fusion_layer4(spa_over3, spa_under3)
-#         fusion5, spa_over5, spa_under5 = self.fusion_layer5(spa_over4, spa_under4)
+#         fre_f0 = self.fref0(over, under)
+#         fre_f1 = self.fref1(over, under)
+#         fre_f2 = self.fref2(over, under)
+#         fre_f3 = self.fref3(over, under)
+#         fre_output = self.fre_output(torch.cat([fre_f0, fre_f1, fre_f2, fre_f3], dim=1))
 #
-#         fusion = torch.cat([fusion1, fusion2, fusion3, fusion4, fusion5], dim=1)
+#         spa_map = self.spa_att(spa_output - fre_output)
+#         spa_res = fre_output * spa_map + spa_output
+#         cat_f = torch.cat([spa_res, fre_output], 1)
+#         fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
 #         fusion = self.output(fusion)
 #
-#         return fusion
+#         fre_loss = self.fre_loss(fre_output)
+#
+#         # fusion_spa = self.spa_post(fusion_spa)
+#         # spa_output = self.spa_output(fusion_spa)
+#         # spa_fre = torch.fft.rfft2(spa_output + 1e-8, norm='backward')
+#         # spa_amp = torch.abs(spa_fre)
+#         # spa_pha = torch.angle(spa_fre)
+#         #
+#         # fre_fre = torch.fft.rfft2(fre_output + 1e-8, norm='backward')
+#         # fre_amp = torch.abs(fre_fre)
+#         # fre_pha = torch.angle(fre_fre)
+#         #
+#         # fusion_fre_amp = fre_amp + spa_amp
+#         # pha_map = self.spa_att(spa_pha - fre_pha)
+#         # fusion_fre_pha = spa_pha * pha_map + spa_pha
+#         #
+#         # real = fusion_fre_amp * torch.cos(fusion_fre_pha) + 1e-8
+#         # imag = fusion_fre_amp * torch.sin(fusion_fre_pha) + 1e-8
+#         # fusion_fre = torch.complex(real, imag) + 1e-8
+#         # fusion = self.output(torch.abs(torch.fft.irfft2(fusion_fre, s=(H, W), norm='backward')))
+#         #
+#         # fusion = self.output(spa_output + fre_output)
+#         #
+#         # fusion = self.output(torch.cat([spa_output, fre_output], 1))
+#         #
+#         # fre_output = self.refine(fre_output)
+#
+#         return fusion, fre_loss
+
+
+class FusionBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, depth=3):
+        super(FusionBlock, self).__init__()
+        self.depth = depth
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.SpaBranch = DenseLayer(self.in_channels, self.out_channels)
+        self.FreBranch = FreLayer(self.in_channels, self.out_channels)
+        self.spa_post = nn.Conv2d((self.in_channels + self.out_channels) * 2, self.out_channels, (3, 3), (1, 1), 1, bias=True)
+
+        self.spa_att = nn.Sequential(nn.Conv2d(self.out_channels, self.out_channels // 2, (3, 3), (1, 1), 1, bias=True),
+                                     nn.LeakyReLU(0.1),
+                                     nn.Conv2d(self.out_channels // 2, self.out_channels, (3, 3), (1, 1), 1, bias=True),
+                                     nn.Sigmoid())
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.contrast = stdv_channels
+        self.cha_att = nn.Sequential(nn.Conv2d(self.out_channels * 2, self.out_channels // 2, (1, 1), (1, 1), 0, bias=True),
+                                     nn.LeakyReLU(0.1),
+                                     nn.Conv2d(self.out_channels // 2, self.out_channels * 2, (1, 1), (1, 1), 0, bias=True),
+                                     nn.Sigmoid())
+        self.post = nn.Conv2d(self.out_channels * 2, self.out_channels, (3, 3), (1, 1), 1, bias=True)
+
+    def forward(self, over, under):
+        _, _, H, W = over.shape
+
+        spa_over = self.SpaBranch(over)
+        spa_under = self.SpaBranch(under)
+        spa_output = self.spa_post(torch.cat([spa_over, spa_under], dim=1))
+        fre_output = self.FreBranch(over, under)
+
+        spa_map = self.spa_att(spa_output - fre_output)
+        spa_res = fre_output * spa_map + spa_output
+        cat_f = torch.cat([spa_res, fre_output], 1)
+        fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
+
+        return fusion, spa_over, spa_under, fre_output
+
+
+class Fusion(nn.Module):
+    def __init__(self, channels, growth=8):
+        super(Fusion, self).__init__()
+        self.growth = growth
+        self.channels = channels
+
+        self.over_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
+                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+                                        nn.LeakyReLU(0.1),
+                                        nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+                                        nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0)
+                                        )
+        self.under_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
+                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+                                         nn.LeakyReLU(0.1),
+                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
+                                         nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0)
+                                         )
+        # modules = []
+        # for i in range(5):
+        #     modules.append(FusionBlock(self.channels, self.growth))
+        #     self.channels += self.growth
+        # self.fusion_layer = nn.Sequential(*modules)
+
+        self.fusion_layer1 = FusionBlock(self.channels, self.growth)
+        self.fusion_layer2 = FusionBlock(self.channels + self.growth, self.growth)
+        self.fusion_layer3 = FusionBlock(self.channels + self.growth * 2, self.growth)
+        self.fusion_layer4 = FusionBlock(self.channels + self.growth * 3, self.growth)
+        # self.fusion_layer5 = FusionBlock(self.channels + self.growth * 4, self.growth)
+
+        self.output = nn.Sequential(
+            ConvBlock(self.growth * 4, 128, kernel_size=3, act_type='lrelu', norm_type=None),
+            ConvBlock(128, 64, kernel_size=3, act_type='lrelu', norm_type=None),
+            ConvBlock(64, 32, kernel_size=3, act_type='lrelu', norm_type=None),
+            ConvBlock(32, 8, kernel_size=3, act_type='lrelu', norm_type=None),
+            nn.Conv2d(8, 1, (3, 3), (1, 1), 1),
+            nn.Tanh()
+        )
+
+        self.fre_loss = nn.Conv2d(self.growth, 1, (1, 1), (1, 1), 0, bias=True)
+
+    def forward(self, over, under):
+        over = self.over_input(over)
+        under = self.under_input(under)
+
+        fusion1, spa_over1, spa_under1, fre1 = self.fusion_layer1(over, under)
+        fusion2, spa_over2, spa_under2, fre2 = self.fusion_layer2(spa_over1, spa_under1)
+        fusion3, spa_over3, spa_under3, fre3 = self.fusion_layer3(spa_over2, spa_under2)
+        fusion4, spa_over4, spa_under4, fre4 = self.fusion_layer4(spa_over3, spa_under3)
+        # fusion5, spa_over5, spa_under5 = self.fusion_layer5(spa_over4, spa_under4)
+
+        fusion = torch.cat([fusion1, fusion2, fusion3, fusion4], dim=1)
+        fusion = self.output(fusion)
+
+        fre_output1 = self.fre_loss(fre1)
+        fre_output2 = self.fre_loss(fre2)
+        fre_output3 = self.fre_loss(fre3)
+        fre_output4 = self.fre_loss(fre4)
+
+        return fusion, fre_output1, fre_output2, fre_output3, fre_output4
+
+
+cfg = {
+    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
+
+model_urls = {
+    'vgg11': 'https://download.pytorch.org/models/vgg11-bbd30ac9.pth',
+    'vgg13': 'https://download.pytorch.org/models/vgg13-c768596a.pth',
+    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
+    'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
+}
+
+
+class VGG(nn.Module):
+
+    def __init__(self, features, num_classes=1000):
+        super(VGG, self).__init__()
+        self.features = features
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes),
+        )
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = nn.Sequential(*[self.features[i] for i in range(3)])(x)
+        x_1 = self.features[3](x)
+        x_2 = nn.Sequential(*[self.features[i] for i in range(4, 8)])(x_1)
+        x_2 = self.features[8](x_2)
+        x_3 = nn.Sequential(*[self.features[i] for i in range(8, 15)])(x_2)
+        x_3 = self.features[15](x_3)
+        x_4 = nn.Sequential(*[self.features[i] for i in range(15, 22)])(x_3)
+        x_4 = self.features[22](x_4)
+        x_5 = nn.Sequential(*[self.features[i] for i in range(22, 29)])(x_4)
+        x_5 = self.features[29](x_5)
+        return x_1, x_2, x_3, x_4, x_5
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                n = m.weight.size(1)
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
+
+
+def make_layers(cfg, batch_norm=False):
+    layers = []
+    in_channels = 3
+    for v in cfg:
+        if v == 'M':
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        else:
+            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+            if batch_norm:
+                layers += [conv2d, nn.BatchNorm2d(v), nn.Sigmoid()]
+            else:
+                layers += [conv2d, nn.Sigmoid()]
+            in_channels = v
+    return nn.Sequential(*layers)
+
+
+def vgg16(pretrained=False, model_root=None, **kwargs):
+    """VGG 16-layer model (configuration "D")"""
+    model = VGG(make_layers(cfg['D']), **kwargs)
+    if pretrained:
+        # model.load_state_dict(model_zoo.load_url(model_urls['vgg16'], model_root))
+        model.load_state_dict(torch.load('vgg16.pth'))
+    return model
+
+
+def vgg16_bn(**kwargs):
+    """VGG 16-layer model (configuration "D") with batch normalization"""
+    kwargs.pop('model_root', None)
+    return VGG(make_layers(cfg['D'], batch_norm=True), **kwargs)
