@@ -141,18 +141,28 @@ class Train(object):
                 # loss_per = torch.mean(loss_per)
 
                 # calculate fre branch loss
-                fre_loss1 = self.ms_ssim(fre1, over) + self.ms_ssim(fre1, under) + 0.8 * (self.mse(fre1, over) + self.mse(fre1, under))
-                fre_loss2 = self.ms_ssim(fre2, over) + self.ms_ssim(fre2, under) + 0.8 * (
-                            self.mse(fre2, over) + self.mse(fre2, under))
-                fre_loss3 = self.ms_ssim(fre3, over) + self.ms_ssim(fre3, under) + 0.8 * (
-                            self.mse(fre3, over) + self.mse(fre3, under))
-                fre_loss4 = self.ms_ssim(fre4, over) + self.ms_ssim(fre4, under) + 0.8 * (
-                            self.mse(fre4, over) + self.mse(fre4, under))
+                # fre_loss1 = self.ms_ssim(fre1, over) + self.ms_ssim(fre1, under) + 0.2 * (self.mse(fre1, over) + self.mse(fre1, under))
+                # fre_loss2 = self.ms_ssim(fre2, over) + self.ms_ssim(fre2, under) + 0.2 * (
+                #             self.mse(fre2, over) + self.mse(fre2, under))
+                # fre_loss3 = self.ms_ssim(fre3, over) + self.ms_ssim(fre3, under) + 0.2 * (
+                #             self.mse(fre3, over) + self.mse(fre3, under))
+                # fre_loss4 = self.ms_ssim(fre4, over) + self.ms_ssim(fre4, under) + 0.2 * (
+                #             self.mse(fre4, over) + self.mse(fre4, under))
+
+                fre_loss1 = self.amp_loss(fre1, over) + self.amp_loss(fre1, under) + 0.8 * (
+                            self.pha_loss(fre1, over) + self.pha_loss(fre1, under))
+                fre_loss2 = self.amp_loss(fre2, over) + self.amp_loss(fre2, under) + 0.8 * (
+                        self.pha_loss(fre2, over) + self.pha_loss(fre2, under))
+                fre_loss3 = self.amp_loss(fre3, over) + self.amp_loss(fre3, under) + 0.8 * (
+                        self.pha_loss(fre3, over) + self.pha_loss(fre3, under))
+                fre_loss4 = self.amp_loss(fre4, over) + self.amp_loss(fre4, under) + 0.8 * (
+                        self.pha_loss(fre4, over) + self.pha_loss(fre4, under))
+
                 fre_bra_loss = fre_loss1 + fre_loss2 + fre_loss3 + fre_loss4
 
                 # calculate total loss
-                # loss_total = loss_sim + loss_mse + 0.2 * loss_fre + amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
-                loss_total = loss_sim + loss_mse + 0.1 * amp_loss + 0.1 * pha_loss  # amp_loss本来是0.1
+                loss_total = loss_sim + loss_mse + 2 * fre_bra_loss # amp_loss本来是0.1
+                # loss_total = loss_sim + 0.8 * loss_mse + 0.1 * amp_loss + 0.1 * pha_loss + 2 * fre_bra_loss  # amp_loss本来是0.1
                 loss_total_epoch.append(loss_total.item())
 
                 loss_total.backward()
