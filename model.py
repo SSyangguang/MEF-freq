@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 # import wandb
 # from tqdm import tqdm
+from scipy import ndimage
 
 import torch
 import torch.nn as nn
@@ -161,7 +162,7 @@ class Train(object):
                 fre_bra_loss = fre_loss1 + fre_loss2 + fre_loss3 + fre_loss4
 
                 # calculate total loss
-                loss_total = loss_sim + loss_mse + 2 * fre_bra_loss # amp_loss本来是0.1
+                loss_total = loss_sim + 0.8 * loss_mse + 0.01 * amp_loss + 0.1 * pha_loss # amp_loss本来是0.1
                 # loss_total = loss_sim + 0.8 * loss_mse + 0.1 * amp_loss + 0.1 * pha_loss + 2 * fre_bra_loss  # amp_loss本来是0.1
                 loss_total_epoch.append(loss_total.item())
 
@@ -296,10 +297,19 @@ class TestColor(object):
             fusionCr[(np.abs(overCr - self.tau) == 0) * (np.abs(underCr - self.tau) == 0)] = self.tau
 
             color = np.stack((outputs, fusionCr.squeeze(), fusionCb.squeeze()), axis=2)
-            color = cv2.cvtColor(color, cv2.COLOR_YCrCb2BGR)
+            color = cv2.cvtColor(np.float32(color), cv2.COLOR_YCrCb2BGR)
             cv2.imwrite('./output/%s' % name[0].split('/')[-1], color * 255)
 
-    def get_block(self, img, block_size=args.block_size):
+    def get_gaussian(self, s, sigma=1.0 / 8):
+        temp = np.zeros(np.array((s, s)))
+        coords = [i // 2 for i in np.array((s, s))]
+        sigmas = [i * sigma for i in np.array((s, s))]
+        temp[tuple(coords)] = 1
+        gaussian_map = ndimage.gaussian_filter(temp, sigmas, 0, mode='constant', cval=0)
+        gaussian_map /= np.max(gaussian_map)
+        return gaussian_map
+
+    def get_block(self, img, block_size=args.block_size, overlap=32):
         '''
         The original image is cut into blocks according to block_size
         output: blocks [blocks_num, block_size, block_size]
@@ -308,15 +318,16 @@ class TestColor(object):
         blocks = torch.ones((block_size, block_size)).cuda()
         blocks = torch.unsqueeze(blocks, dim=0)
 
-        img_pad = F.pad(img, (0, block_size - n % block_size, 0, block_size - m % block_size), 'constant')  # mirror padding
-        # img_pad = np.pad(img, ((0, 256 - m % block_size), (0, 256 - n % block_size)), 'reflect')  # mirror padding
-        m_block = int(np.ceil(m / block_size))  # Calculate the total number of blocks
-        n_block = int(np.ceil(n / block_size))  # Calculate the total number of blocks
+        # img_pad = F.pad(img, (0, block_size - n % block_size, 0, block_size - m % block_size), 'constant')  # mirror padding
+        img_pad = F.pad(img, (0, block_size - n % (block_size - overlap), 0, block_size - m % (block_size - overlap)), 'constant')  # mirror padding
+        m_block = int(np.ceil(m / (block_size - overlap)))  # Calculate the total number of blocks
+        n_block = int(np.ceil(n / (block_size - overlap)))  # Calculate the total number of blocks
 
         # cutting
         for i in range(0, m_block):
             for j in range(0, n_block):
-                block = torch.unsqueeze(img_pad[i * block_size: (i + 1) * block_size, j * block_size: (j + 1) * block_size], dim=0)
+                # block = torch.unsqueeze(img_pad[i * block_size: (i + 1) * block_size, j * block_size: (j + 1) * block_size], dim=0)
+                block = torch.unsqueeze(img_pad[i * (block_size - overlap): (i + 1) * (block_size - overlap) + overlap, j * (block_size - overlap): (j + 1) * (block_size - overlap) + overlap], dim=0)
                 blocks = torch.cat((blocks, block), dim=0)
         blocks = blocks[1:, :, :]
 
@@ -327,36 +338,45 @@ class TestColor(object):
         block fusion
         '''
         block_num = img1.shape[0]
-        final_fusion = torch.ones(block_num, block_size, block_size)
+        # final_fusion = torch.ones(block_num, block_size, block_size)
+        final_fusion = np.ones((block_num, block_size, block_size))
         # final_fusion = np.zeros_like(img1)
 
         for i in range(block_num):
             img1_inblock = torch.unsqueeze(img1[i:i+1, :, :], dim=0)
             img2_inblock = torch.unsqueeze(img2[i:i+1, :, :], dim=0)
 
-            img_fusion = self.fusion_model(img1_inblock, img2_inblock)
+            img_fusion, _, _, _, _ = self.fusion_model(img1_inblock, img2_inblock)
 
             # note that no normalization should be used in different block fusion
             # img_fusion = MaxMinNormalization(img_fusion[0], torch.max(img_fusion[0]), torch.min(img_fusion[0]))
             # img_fusion = img_fusion.numpy()
+            # img_fusion = (img_fusion - fusion_nor.min()) / (fusion_nor.max() - fusion_nor.min())
 
-            final_fusion[i, :, :] = torch.squeeze(img_fusion, dim=0)
+            final_fusion[i, :, :] = torch.squeeze(img_fusion, dim=0).cpu().detach().numpy()
 
+        final_fusion = (final_fusion - final_fusion.min()) / (final_fusion.max() - final_fusion.min())
         return final_fusion
 
-    def block_to_img(self, block_img, m, n):
+    def block_to_img(self, block_img, m, n, overlap=32):
         '''
         Enter the fused block and restore it to the original image size.
         '''
         block_size = block_img.shape[2]
-        m_block = int(np.ceil(m / block_size))
-        n_block = int(np.ceil(n / block_size))
-        fused_full_img_wpad = torch.ones(m_block * block_size, n_block * block_size)  # Image size after padding
+        m_block = int(np.ceil(m / (block_size - overlap)))
+        n_block = int(np.ceil(n / (block_size - overlap)))
+        # fused_full_img_wpad = torch.ones(m_block * block_size, n_block * block_size)  # Image size after padding
+        fused_full_img_wpad = np.ones((m_block * block_size, n_block * block_size))
         for i in range(0, m_block):
             for j in range(0, n_block):
-                fused_full_img_wpad[i * block_size: (i + 1) * block_size,
-                j * block_size: (j + 1) * block_size] = block_img[i * n_block + j, :, :]
-        fused_full_img = fused_full_img_wpad[:m, :n]  # image with original size
+                # fused_full_img_wpad[i * block_size: (i + 1) * block_size,
+                # j * block_size: (j + 1) * block_size] = block_img[i * n_block + j, :, :]
+                fused_full_img_wpad[i * (block_size - overlap): (i + 1) * (block_size - overlap) + overlap,
+                j * (block_size - overlap): (j + 1) * (block_size - overlap) + overlap] = block_img[i * n_block + j, :, :]
+        fused_full_img = fused_full_img_wpad[:m, :n] # image with original size
+        fused_full_img = (fused_full_img - fused_full_img.min()) / (fused_full_img.max() - fused_full_img.min())
+        # fused_full_img /= nor
+
         return fused_full_img
 
     def block_fusion(self, img1, img2, block_size=256):

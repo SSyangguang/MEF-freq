@@ -1,11 +1,12 @@
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import numpy as np
+
 
 from option import args
-from GPPNN_models.refine import Refine
-from collections import OrderedDict
 
 # network functions
 def get_valid_padding(kernel_size, dilation):
@@ -88,7 +89,7 @@ class DenseNet(nn.Module):
         super(DenseNet, self).__init__()
         self.num_channels = 1
         self.num_features = num_features
-        self.growth = 44
+        self.growth = 44   # 之前是44
         modules = []
         self.conv_1 = ConvBlock(2 * self.num_channels, self.num_features, kernel_size=3, act_type='lrelu', norm_type=None)
         for i in range(5):
@@ -299,6 +300,75 @@ class FreLayer(nn.Module):
         return fre_output
 
 
+class ChannelAtt(nn.Module):
+    # channel attention module
+    def __init__(self, channel, stride=1, reduction=8, bias=True):
+        super(ChannelAtt, self).__init__()
+        self.channel = channel
+        # global average pooling: feature --> point
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        # feature channel downscale
+        self.channel_down = nn.Sequential(
+            nn.Conv2d(self.channel, self.channel // reduction, (1, 1), padding=0, bias=bias),
+            nn.PReLU()
+        )
+        # feature upscale --> channel weight
+        self.channel_up1 = nn.Sequential(
+            nn.Conv2d(self.channel // reduction, self.channel, (1, 1), padding=0, bias=bias),
+            nn.Sigmoid()
+        )
+        self.channel_up2 = nn.Sequential(
+            nn.Conv2d(self.channel // reduction, self.channel, (1, 1), padding=0, bias=bias),
+            nn.Sigmoid()
+        )
+        # different resolution to same
+        self.up = nn.Sequential(
+            nn.ConvTranspose2d(self.channel, self.channel, (3, 3), stride=stride,
+                               padding=(1, 1), output_padding=(1, 1), bias=bias),
+            nn.PReLU()
+        )
+
+    def forward(self, x, y):
+        fusion = torch.add(x, y)
+        fusion = self.channel_down(self.avg_pool(fusion))
+        out_x = self.channel_up1(fusion)
+        out_y = self.channel_up2(fusion)
+        return [out_x, out_y]
+
+
+class SpatialAtt(nn.Module):
+    # spatial attention module
+    def __init__(self, channel, stride=1, kernel=(3, 3), padding=(1, 1), bias=True):
+        super(SpatialAtt, self).__init__()
+        self.channel = channel
+        self.conv_fusion = nn.Sequential(
+            nn.Conv2d(self.channel * 2, self.channel, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=bias),
+            # nn.BatchNorm2d(in_channel, eps=1e-5, momentum=0.01, affine=True),
+            nn.PReLU()
+        )
+        self.down = nn.Sequential(
+            nn.Conv2d(self.channel, self.channel, kernel_size=(3, 3), stride=(2, 2), padding=padding, bias=bias),
+            nn.PReLU()
+        )
+        self.up1 = nn.Sequential(
+            nn.ConvTranspose2d(self.channel, self.channel, kernel_size=(3, 3), stride=(2, 2),
+                               padding=padding, output_padding=(1, 1), bias=bias),
+            nn.Sigmoid()
+        )
+        self.up2 = nn.Sequential(
+            nn.ConvTranspose2d(self.channel, self.channel, kernel_size=(3, 3), stride=(2, 2),
+                               padding=padding, output_padding=(1, 1), bias=bias),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, y):
+        fusion = torch.cat([x, y], dim=1)
+        fusion = self.down(self.conv_fusion(fusion))
+        up_x = self.up1(fusion)
+        up_y = self.up2(fusion)
+        return [up_x, up_y]
+
+
 def stdv_channels(F):
     assert(F.dim() == 4)
     F_mean = mean_channels(F)
@@ -310,140 +380,6 @@ def mean_channels(F):
     assert(F.dim() == 4)
     spatial_sum = F.sum(3, keepdim=True).sum(2, keepdim=True)
     return spatial_sum / (F.size(2) * F.size(3))
-
-
-# class Fusion(nn.Module):
-#     def __init__(self, channels, depth=3):
-#         super(Fusion, self).__init__()
-#         self.depth = depth
-#         self.channels = channels
-#         self.dense = DenseNet(self.channels)
-#         self.over_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.LeakyReLU(0.1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.LeakyReLU(0.1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.LeakyReLU(0.1),
-#                                         nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                         nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
-#                                         nn.LeakyReLU(0.1)
-#                                         )
-#         self.under_input = nn.Sequential(nn.Conv2d(1, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.LeakyReLU(0.1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.LeakyReLU(0.1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.LeakyReLU(0.1),
-#                                          nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1),
-#                                          nn.Conv2d(self.channels, self.channels, (1, 1), (1, 1), 0),
-#                                          nn.LeakyReLU(0.1)
-#                                          )
-#
-#         self.fref0 = FreLayer(self.channels, self.channels)
-#         self.fref1 = FreLayer(self.channels, self.channels)
-#         self.fref2 = FreLayer(self.channels, self.channels)
-#         self.fref3 = FreLayer(self.channels, self.channels)
-#
-#         self.spa_post = nn.Sequential(
-#             nn.Sequential(
-#                 nn.Conv2d(self.channels * (self.depth + 1) * 2, self.channels * 4, (3, 3), (1, 1), 1),
-#                 nn.LeakyReLU(0.1)
-#             ),
-#             nn.Sequential(
-#                 nn.Conv2d(self.channels * 4, self.channels * 2, (3, 3), (1, 1), 1),
-#                 nn.BatchNorm2d(self.channels * 2),
-#                 nn.LeakyReLU(0.1)
-#             ),
-#             nn.Sequential(
-#                 nn.Conv2d(self.channels * 2, self.channels, (3, 3), (1, 1), 1),
-#                 nn.BatchNorm2d(self.channels),
-#                 nn.LeakyReLU(0.1)
-#             ))
-#         self.spa_output = nn.Conv2d(self.channels, self.channels, (3, 3), (1, 1), 1)
-#         self.fre_output = nn.Sequential(nn.Conv2d(self.channels*4, self.channels*2, (1, 1), (1, 1), 0),
-#                                         nn.Conv2d(self.channels*2, self.channels, (1, 1), (1, 1), 0))
-#
-#         self.spa_att = nn.Sequential(nn.Conv2d(self.channels, self.channels // 2, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.LeakyReLU(0.1),
-#                                      nn.Conv2d(self.channels // 2, self.channels, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.Sigmoid())
-#
-#         self.output = nn.Sequential(
-#             nn.Conv2d(self.channels, 4, (3, 3), (1, 1), 1),
-#             nn.Conv2d(4, 1, (3, 3), (1, 1), 1),
-#             nn.Tanh()
-#         )
-#
-#         self.refine = Refine(self.channels, 1)
-#
-#         self.spa_att = nn.Sequential(nn.Conv2d(channels, channels // 2, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.LeakyReLU(0.1),
-#                                      nn.Conv2d(channels // 2, channels, (3, 3), (1, 1), 1, bias=True),
-#                                      nn.Sigmoid())
-#         self.avgpool = nn.AdaptiveAvgPool2d(1)
-#         self.contrast = stdv_channels
-#         self.cha_att = nn.Sequential(nn.Conv2d(channels * 2, channels // 2, (1, 1), (1, 1), 0, bias=True),
-#                                      nn.LeakyReLU(0.1),
-#                                      nn.Conv2d(channels // 2, channels * 2, (1, 1), (1, 1), 0, bias=True),
-#                                      nn.Sigmoid())
-#         self.post = nn.Conv2d(channels * 2, channels, (3, 3), (1, 1), 1, bias=True)
-#         self.fre_loss = nn.Conv2d(self.channels, 1, (1, 1), (1, 1), 0, bias=True)
-#
-#
-#     def forward(self, over, under):
-#         _, _, H, W = over.shape
-#
-#         spa_output = self.dense(over, under)
-#
-#         over = self.over_input(over)
-#         under = self.under_input(under)
-#
-#         fre_f0 = self.fref0(over, under)
-#         fre_f1 = self.fref1(over, under)
-#         fre_f2 = self.fref2(over, under)
-#         fre_f3 = self.fref3(over, under)
-#         fre_output = self.fre_output(torch.cat([fre_f0, fre_f1, fre_f2, fre_f3], dim=1))
-#
-#         spa_map = self.spa_att(spa_output - fre_output)
-#         spa_res = fre_output * spa_map + spa_output
-#         cat_f = torch.cat([spa_res, fre_output], 1)
-#         fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
-#         fusion = self.output(fusion)
-#
-#         fre_loss = self.fre_loss(fre_output)
-#
-#         # fusion_spa = self.spa_post(fusion_spa)
-#         # spa_output = self.spa_output(fusion_spa)
-#         # spa_fre = torch.fft.rfft2(spa_output + 1e-8, norm='backward')
-#         # spa_amp = torch.abs(spa_fre)
-#         # spa_pha = torch.angle(spa_fre)
-#         #
-#         # fre_fre = torch.fft.rfft2(fre_output + 1e-8, norm='backward')
-#         # fre_amp = torch.abs(fre_fre)
-#         # fre_pha = torch.angle(fre_fre)
-#         #
-#         # fusion_fre_amp = fre_amp + spa_amp
-#         # pha_map = self.spa_att(spa_pha - fre_pha)
-#         # fusion_fre_pha = spa_pha * pha_map + spa_pha
-#         #
-#         # real = fusion_fre_amp * torch.cos(fusion_fre_pha) + 1e-8
-#         # imag = fusion_fre_amp * torch.sin(fusion_fre_pha) + 1e-8
-#         # fusion_fre = torch.complex(real, imag) + 1e-8
-#         # fusion = self.output(torch.abs(torch.fft.irfft2(fusion_fre, s=(H, W), norm='backward')))
-#         #
-#         # fusion = self.output(spa_output + fre_output)
-#         #
-#         # fusion = self.output(torch.cat([spa_output, fre_output], 1))
-#         #
-#         # fre_output = self.refine(fre_output)
-#
-#         return fusion, fre_loss
 
 
 class FusionBlock(nn.Module):
@@ -461,6 +397,7 @@ class FusionBlock(nn.Module):
                                      nn.LeakyReLU(0.1),
                                      nn.Conv2d(self.out_channels // 2, self.out_channels, (3, 3), (1, 1), 1, bias=True),
                                      nn.Sigmoid())
+
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.contrast = stdv_channels
         self.cha_att = nn.Sequential(nn.Conv2d(self.out_channels * 2, self.out_channels // 2, (1, 1), (1, 1), 0, bias=True),
@@ -468,6 +405,9 @@ class FusionBlock(nn.Module):
                                      nn.Conv2d(self.out_channels // 2, self.out_channels * 2, (1, 1), (1, 1), 0, bias=True),
                                      nn.Sigmoid())
         self.post = nn.Conv2d(self.out_channels * 2, self.out_channels, (3, 3), (1, 1), 1, bias=True)
+
+        self.channel_map = ChannelAtt(self.out_channels)
+        self.spatial_map = SpatialAtt(self.out_channels)
 
     def forward(self, over, under):
         _, _, H, W = over.shape
@@ -477,10 +417,14 @@ class FusionBlock(nn.Module):
         spa_output = self.spa_post(torch.cat([spa_over, spa_under], dim=1))
         fre_output = self.FreBranch(over, under)
 
-        spa_map = self.spa_att(spa_output - fre_output)
-        spa_res = fre_output * spa_map + spa_output
-        cat_f = torch.cat([spa_res, fre_output], 1)
-        fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
+        # spa_map = self.spa_att(spa_output - fre_output)
+        # spa_res = fre_output * spa_map + spa_output
+        # cat_f = torch.cat([spa_res, fre_output], 1)
+        # fusion = self.post(self.cha_att(self.contrast(cat_f) + self.avgpool(cat_f)) * cat_f)
+
+        fusion_x = spa_output * self.channel_map(spa_output, fre_output)[0] * self.spatial_map(spa_output, fre_output)[0]
+        fusion_y = fre_output * self.channel_map(spa_output, fre_output)[1] * self.spatial_map(spa_output, fre_output)[1]
+        fusion = fusion_x + fusion_y
 
         return fusion, spa_over, spa_under, fre_output
 
