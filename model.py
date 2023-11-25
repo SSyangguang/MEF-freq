@@ -14,7 +14,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 from torch.optim import Adam, AdamW, lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
-from kornia.losses import MS_SSIMLoss, SSIMLoss
+# from kornia.losses import MS_SSIMLoss, SSIMLoss
 
 from option import args
 from dataloader import TrainMEF, TestMEF
@@ -28,6 +28,7 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
 
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
@@ -162,8 +163,9 @@ class Train(object):
                 fre_bra_loss = fre_loss1 + fre_loss2 + fre_loss3 + fre_loss4
 
                 # calculate total loss
-                loss_total = loss_sim + 0.8 * loss_mse + 0.01 * amp_loss + 0.1 * pha_loss # amp_loss本来是0.1
-                # loss_total = loss_sim + 0.8 * loss_mse + 0.1 * amp_loss + 0.1 * pha_loss + 2 * fre_bra_loss  # amp_loss本来是0.1
+                # loss_total = loss_sim + 0.2 * loss_mse + 0.5 * fre_bra_loss # amp_loss本来是0.1
+                loss_total = loss_sim + 0.2 * loss_mse + 0.1 * amp_loss + 0.1 * pha_loss + 0.1 *fre_bra_loss  # amp_loss本来是0.1
+                # loss_total = loss_sim + 0.8 * loss_mse
                 loss_total_epoch.append(loss_total.item())
 
                 loss_total.backward()
@@ -284,6 +286,10 @@ class TestColor(object):
             under = under.cpu().detach().numpy()
             under = np.squeeze(under)
 
+            outputs_scale = (outputs - outputs.min()) / (outputs.max() - outputs.min())
+            # outputs_scale = (outputs - outputs.mean()) / outputs.std()
+            # outputs_scale = (outputs_scale * 255).astype(np.int)
+
             # # save gray fusion image
             # outputs_scale = (outputs - outputs.min()) / (outputs.max() - outputs.min())
             # # outputs_scale = (outputs - outputs.mean()) / outputs.std()
@@ -296,7 +302,7 @@ class TestColor(object):
             fusionCb[(np.abs(overCb - self.tau) == 0) * (np.abs(underCb - self.tau) == 0)] = self.tau
             fusionCr[(np.abs(overCr - self.tau) == 0) * (np.abs(underCr - self.tau) == 0)] = self.tau
 
-            color = np.stack((outputs, fusionCr.squeeze(), fusionCb.squeeze()), axis=2)
+            color = np.stack((outputs_scale, fusionCr.squeeze(), fusionCb.squeeze()), axis=2)
             color = cv2.cvtColor(np.float32(color), cv2.COLOR_YCrCb2BGR)
             cv2.imwrite('./output/%s' % name[0].split('/')[-1], color * 255)
 

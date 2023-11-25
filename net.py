@@ -426,7 +426,7 @@ class FusionBlock(nn.Module):
         fusion_y = fre_output * self.channel_map(spa_output, fre_output)[1] * self.spatial_map(spa_output, fre_output)[1]
         fusion = fusion_x + fusion_y
 
-        return fusion, spa_over, spa_under, fre_output
+        return fusion, spa_over, spa_under, fre_output, spa_output
 
 
 class Fusion(nn.Module):
@@ -474,10 +474,10 @@ class Fusion(nn.Module):
         over = self.over_input(over)
         under = self.under_input(under)
 
-        fusion1, spa_over1, spa_under1, fre1 = self.fusion_layer1(over, under)
-        fusion2, spa_over2, spa_under2, fre2 = self.fusion_layer2(spa_over1, spa_under1)
-        fusion3, spa_over3, spa_under3, fre3 = self.fusion_layer3(spa_over2, spa_under2)
-        fusion4, spa_over4, spa_under4, fre4 = self.fusion_layer4(spa_over3, spa_under3)
+        fusion1, spa_over1, spa_under1, fre1, spa1 = self.fusion_layer1(over, under)
+        fusion2, spa_over2, spa_under2, fre2, spa2 = self.fusion_layer2(spa_over1, spa_under1)
+        fusion3, spa_over3, spa_under3, fre3, spa3 = self.fusion_layer3(spa_over2, spa_under2)
+        fusion4, spa_over4, spa_under4, fre4, spa4 = self.fusion_layer4(spa_over3, spa_under3)
         # fusion5, spa_over5, spa_under5 = self.fusion_layer5(spa_over4, spa_under4)
 
         fusion = torch.cat([fusion1, fusion2, fusion3, fusion4], dim=1)

@@ -7,7 +7,7 @@ parser.add_argument('--seed', type=int, default=1, help='random seed')
 parser.add_argument('--device', type=str, default='cuda:0',
                     help='gpu number')
 
-parser.add_argument('--devices', type=int, default=[0, 1, 2, 3],
+parser.add_argument('--devices', type=int, default=[0, 1, 2],
                     nargs='+',
                     help='gpu number')
 
@@ -16,13 +16,13 @@ parser.add_argument('--devices', type=int, default=[0, 1, 2, 3],
 #                     help='MEF dataset path')
 parser.add_argument('--data_path', type=str, default='/data/yg/data/PQA-MEF/datasets/training_set',
                     help='MEF simple dataset path')
-# parser.add_argument('--data_path', type=str, default='E:\project\data/MEF_revise/Dataset_Part1',
+# parser.add_argument('--data_test_path', type=str, default='E:\project\data/PQA-MEF/datasets/test_set',
 #                     help='MEF dataset path')
-parser.add_argument('--data_test_path', type=str, default='/data/yg/data/PQA-MEF/datasets/test_set',
+parser.add_argument('--data_test_path', type=str, default='/data/yg/data/PQA-MEF-freqvis/datasets/test_set',
                     help='MEF dataset path')
 
 # Training
-parser.add_argument('--batch_size', type=int, default=100, help='batch size of fusion training')
+parser.add_argument('--batch_size', type=int, default=60, help='batch size of fusion training')
 parser.add_argument('--patch', type=int, default=256, help='patch size of fusion training')
 parser.add_argument('--epochs', type=int, default=600, help='epochs of fusion training')
 parser.add_argument('--lr', type=float, default=1e-3, help='learning rate of fusion training')
