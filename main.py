@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 
-from model import Train, Test, TestColor
+from model import Train, TestColor
 from option import args
 
 seed = args.seed

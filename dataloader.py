@@ -8,7 +8,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 
 from option import args
-from utils import read_MEF, read_MEF_simple
+from utils import read_MEF_simple
 
 
 class TrainMEF(data.Dataset):

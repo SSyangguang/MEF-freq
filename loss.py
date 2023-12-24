@@ -312,19 +312,6 @@ class MS_SSIM(torch.nn.Module):
         )
 
 
-class CharbonnierLoss(nn.Module):
-    """Charbonnier Loss (L1)"""
-
-    def __init__(self, eps=1e-3):
-        super(CharbonnierLoss, self).__init__()
-        self.eps = eps
-
-    def forward(self, x, y):
-        diff = torch.sub(x, y)
-        loss = torch.mean(torch.sqrt(torch.pow(diff, 2) + self.eps*self.eps))
-        return loss
-
-
 class AMPLoss(nn.Module):
     def __init__(self):
         super(AMPLoss, self).__init__()

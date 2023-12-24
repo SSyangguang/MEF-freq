@@ -12,13 +12,10 @@ parser.add_argument('--devices', type=int, default=[0, 1, 2],
                     help='gpu number')
 
 # Data Acquisition
-# parser.add_argument('--data_path', type=str, default='/data/yg/data/MEF_revise/Dataset_Part1',
-#                     help='MEF dataset path')
-parser.add_argument('--data_path', type=str, default='/data/yg/data/PQA-MEF/datasets/training_set',
+parser.add_argument('--data_path', type=str, default='./PQA-MEF/datasets/training_set',
                     help='MEF simple dataset path')
-# parser.add_argument('--data_test_path', type=str, default='E:\project\data/PQA-MEF/datasets/test_set',
-#                     help='MEF dataset path')
-parser.add_argument('--data_test_path', type=str, default='/data/yg/data/PQA-MEF-freqvis/datasets/test_set',
+
+parser.add_argument('--data_test_path', type=str, default='./PQA-MEF/datasets/test_set',
                     help='MEF dataset path')
 
 # Training
